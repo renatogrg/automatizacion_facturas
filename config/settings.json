@@ -1,0 +1,10 @@
+{
+  "carpeta_facturas": "C:\\FACTURAS",
+  "carpeta_entrada": "C:\\FACTURAS\\ENTRADA_FACTURA",
+  "carpeta_pendientes": "C:\\FACTURAS\\PENDIENTES",
+  "nombre_excel_registro": "Registro Facturas.xlsx",
+  "nombre_excel_pendientes": "Registro_Pendientes.xlsx",
+  "servicio_encendido": true,
+  "modelo_claude": "claude-haiku-4-5-20251001",
+  "umbral_confianza_local": 0.90
+}

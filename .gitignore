@@ -1,0 +1,29 @@
+# Entornos virtuales
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Configuración sensible
+.env
+config/.env
+
+# Facturas y datos reales (privacidad)
+tests/sample_invoices/*.pdf
+tests/sample_invoices/*.jpg
+tests/sample_invoices/*.jpeg
+tests/sample_invoices/*.png
+!tests/sample_invoices/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Build / empaquetado
+build/dist/
+dist/
+*.spec
+
+# IDE
+.vscode/
+.idea/
