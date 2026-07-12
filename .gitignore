@@ -27,3 +27,13 @@ dist/
 # IDE
 .vscode/
 .idea/
+
+# Cachés
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
