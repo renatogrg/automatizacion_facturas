@@ -144,11 +144,20 @@ def procesar_factura_completo(
 def _llamar_claude(
     ruta_archivo: str,
     texto: str,
-    consorcios: list,
-    es_imagen: bool,
-    necesita_consorcio: bool,
-    necesita_fecha: bool,
+    ...
 ) -> dict | None:
+    """
+    Llama a Claude Haiku 4.5 solo para los campos que faltan.
+    ...
+    """
+    try:
+        from src.extractor.claude_client import analizar_con_texto, analizar_con_imagen
+        ...
+    except NotImplementedError:
+        print("  ⚠ claude_client aún no implementado — yendo a PENDIENTES")
+        return None
+    
+    
     """
     Llama a Claude Haiku 4.5 solo para los campos que faltan.
     Devuelve un dict con los campos encontrados, o None si falla.
