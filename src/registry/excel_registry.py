@@ -11,14 +11,14 @@ from datetime import datetime
 COLUMNAS = ["Fecha", "Consorcio", "Proveedor", "RUC proveedor", "Total", "Archivo"]
 
 
-def registrar_factura(ruta_excel: str, fila: dict):
+def registrar_factura(ruta_excel: str, fila: dict, nombre_consorcio: str = ""):
     """
     Agrega una fila al Excel. Si no existe, lo crea.
     
     Args:
         ruta_excel: ruta al archivo .xlsx
         fila: dict con keys del COLUMNAS
-              ej. {"Fecha": "2026-07-01", "Consorcio": "Wayayo", ...}
+        nombre_consorcio: nombre del consorcio (para el nombre del archivo)
     """
     ruta_excel = Path(ruta_excel)
     ruta_excel.parent.mkdir(parents=True, exist_ok=True)
