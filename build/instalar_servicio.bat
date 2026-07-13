@@ -1,114 +1,99 @@
-"""
-Script para instalar el sistema como servicio de Windows.
+@echo off
+REM ============================================================
+REM  INSTALADOR DEL SISTEMA DE FACTURAS
+REM  Instala el servicio de Windows y crea el archivo de inicio
+REM  en C:\SistemaFacturas\
+REM
+REM  EJECUTAR COMO ADMINISTRADOR
+REM ============================================================
 
-Uso:
-    python build/instalar_servicio.py install     # Instalar servicio
-    python build/instalar_servicio.py start       # Iniciar
-    python build/instalar_servicio.py stop        # Detener
-    python build/instalar_servicio.py remove      # Desinstalar
-    
-Ejecutar como ADMINISTRADOR.
-"""
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo.
+    echo  ERROR: Este script debe ejecutarse como ADMINISTRADOR.
+    echo  Haz clic derecho ^> "Ejecutar como administrador"
+    echo.
+    pause
+    exit /b 1
+)
 
-import sys
-import os
-import time
-import threading
-from pathlib import Path
+echo.
+echo  ============================================================
+echo   INSTALANDO SISTEMA DE GESTION AUTOMATICA DE FACTURAS
+echo  ============================================================
+echo.
 
-import win32serviceutil
-import win32service
-import servicemanager
+REM ── 1. Copiar programa a C:\SistemaFacturas\ ──────────────────
+echo  [1/4] Copiando programa a C:\SistemaFacturas\...
+if not exist "C:\SistemaFacturas" mkdir "C:\SistemaFacturas"
 
+REM Copiar todo el proyecto (se asume que este .bat está en build\)
+xcopy /E /I /Y "%~dp0.." "C:\SistemaFacturas" >nul 2>&1
+if %errorLevel% neq 0 (
+    echo  ERROR al copiar archivos.
+    pause
+    exit /b 1
+)
+echo  OK
 
-class SistemaFacturasService(win32serviceutil.ServiceFramework):
-    """Servicio de Windows para el sistema de facturas."""
-    
-    _svc_name_ = "SistemaFacturas"
-    _svc_display_name_ = "Sistema de Gestión Automática de Facturas"
-    _svc_description_ = "Monitorea y procesa automáticamente facturas en C:\\FACTURAS\\ENTRADA_FACTURA"
-    
-    def __init__(self, args):
-        win32serviceutil.ServiceFramework.__init__(self, args)
-        self.is_alive = True
-        self.watcher_thread = None
-    
-    def SvcStop(self):
-        """Se ejecuta cuando el usuario detiene el servicio."""
-        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        self.is_alive = False
-        
-        # Esperar a que el thread termine
-        if self.watcher_thread and self.watcher_thread.is_alive():
-            self.watcher_thread.join(timeout=5)
-        
-        servicemanager.LogMsg(
-            servicemanager.EVENTLOG_INFORMATION_TYPE,
-            servicemanager.PYS_SERVICE_STOPPED,
-            (self._svc_name_, "")
-        )
-    
-    def SvcDoRun(self):
-        """Se ejecuta cuando el servicio inicia."""
-        servicemanager.LogMsg(
-            servicemanager.EVENTLOG_INFORMATION_TYPE,
-            servicemanager.PYS_SERVICE_STARTED,
-            (self._svc_name_, "")
-        )
-        
-        # Iniciar el watcher en un thread daemon
-        self.watcher_thread = threading.Thread(target=self._run_watcher, daemon=True)
-        self.watcher_thread.start()
-        
-        # Mantener el servicio vivo
-        while self.is_alive:
-            time.sleep(1)
-    
-    def _run_watcher(self):
-        """Corre el watcher en background."""
-        try:
-            # Asegurar que el directorio del programa esté en el path
-            ruta_programa = Path(__file__).parent.parent
-            sys.path.insert(0, str(ruta_programa))
-            
-            # Cambiar al directorio del programa
-            os.chdir(str(ruta_programa))
-            
-            from src.watcher import iniciar_watcher
-            from src.utils.config_loader import cargar_settings, cargar_consorcios
-            from src.utils.logger import obtener_logger
-            
-            logger = obtener_logger("servicio")
-            logger.info("Servicio iniciado correctamente")
-            
-            settings = cargar_settings("config/settings.json")
-            consorcios = cargar_consorcios("config/consorcios.json")
-            
-            # Iniciar el watcher (bloqueante)
-            iniciar_watcher(settings, consorcios)
-            
-        except Exception as e:
-            try:
-                from src.utils.logger import obtener_logger
-                logger = obtener_logger("servicio")
-                logger.error(f"Error crítico en watcher: {e}")
-            except:
-                pass
-            
-            servicemanager.LogErrorMsg(f"Error en servicio: {e}")
-            self.is_alive = False
+REM ── 2. Crear entorno virtual e instalar dependencias ─────────
+echo  [2/4] Instalando dependencias Python...
+cd /d "C:\SistemaFacturas"
 
+if not exist "venv" (
+    python -m venv venv
+)
+call venv\Scripts\activate.bat
+pip install -r requirements.txt --quiet
+if %errorLevel% neq 0 (
+    echo  ERROR al instalar dependencias.
+    pause
+    exit /b 1
+)
+echo  OK
 
-def main():
-    if len(sys.argv) == 1:
-        # Sin argumentos, ejecutar como servicio
-        servicemanager.Initialize()
-        servicemanager.PrepareToHostSingleServiceProcess(SistemaFacturasService)
-        servicemanager.StartServiceCtrlDispatcher()
-    else:
-        # Con argumentos: install, start, stop, remove
-        win32serviceutil.HandleCommandLine(SistemaFacturasService)
+REM ── 3. Crear SistemaFacturas.bat en C:\SistemaFacturas\ ──────
+echo  [3/4] Creando SistemaFacturas.bat en C:\SistemaFacturas\...
 
+(
+echo @echo off
+echo REM Inicia el Sistema de Gestion Automatica de Facturas
+echo cd /d "C:\SistemaFacturas"
+echo call venv\Scripts\activate.bat
+echo python -m src.main
+echo pause
+) > "C:\SistemaFacturas\SistemaFacturas.bat"
 
-if __name__ == '__main__':
-    main()
+echo  OK
+
+REM ── 4. Crear acceso directo en Inicio (autoarranque) ─────────
+echo  [4/4] Configurando inicio automatico al encender la PC...
+
+set STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+
+powershell -NoProfile -Command ^
+  "$ws = New-Object -ComObject WScript.Shell;" ^
+  "$sc = $ws.CreateShortcut('%STARTUP%\SistemaFacturas.lnk');" ^
+  "$sc.TargetPath = 'C:\SistemaFacturas\SistemaFacturas.bat';" ^
+  "$sc.WorkingDirectory = 'C:\SistemaFacturas';" ^
+  "$sc.WindowStyle = 7;" ^
+  "$sc.Description = 'Sistema de Gestion Automatica de Facturas';" ^
+  "$sc.Save()" >nul 2>&1
+
+echo  OK
+
+echo.
+echo  ============================================================
+echo   INSTALACION COMPLETADA
+echo  ============================================================
+echo.
+echo   Programa instalado en : C:\SistemaFacturas\
+echo   Archivo de inicio     : C:\SistemaFacturas\SistemaFacturas.bat
+echo   Autoarranque          : Configurado (inicio de sesion)
+echo.
+echo   PROXIMO PASO:
+echo   Edita C:\SistemaFacturas\config\.env
+echo   y coloca tu clave de API de Anthropic:
+echo   ANTHROPIC_API_KEY=sk-ant-...
+echo.
+pause

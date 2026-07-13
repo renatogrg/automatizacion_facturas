@@ -1,23 +1,48 @@
 """
 Fase 2 - OCR local y gratuito para fotos o PDFs escaneados.
-Requiere tener Tesseract-OCR instalado en la PC (no solo la libreria de Python).
+Requiere tener Tesseract-OCR instalado en la PC.
+La ruta se detecta automáticamente (via config_loader) — no hay rutas hardcodeadas.
 """
 
 import pytesseract
-from pdf2image import convert_from_path
 from PIL import Image
-import os
+from src.utils.config_loader import ruta_tesseract
 
-# Configurar la ruta de Tesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\rodri\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+
+def _configurar_tesseract():
+    ruta = ruta_tesseract()
+    if ruta:
+        pytesseract.pytesseract.tesseract_cmd = ruta
+    # Si no se encontró, pytesseract usará el que esté en PATH del sistema
+
+
+_configurar_tesseract()
+
 
 def extraer_texto_ocr(ruta_imagen_o_pdf: str) -> str:
-    if ruta_imagen_o_pdf.lower().endswith(".pdf"):
-        paginas = convert_from_path(ruta_imagen_o_pdf, dpi=200, thread_count=4)
-        return "\n".join(
-            pytesseract.image_to_string(pagina, lang="spa").strip()
-            for pagina in paginas
-        ).strip()
+    """
+    Extrae texto de una imagen (JPEG, PNG) o PDF escaneado usando Tesseract.
+    Devuelve cadena vacía si Tesseract no está instalado o si falla la extracción.
+    """
+    try:
+        if ruta_imagen_o_pdf.lower().endswith(".pdf"):
+            try:
+                from pdf2image import convert_from_path
+            except ImportError:
+                print("  ⚠ pdf2image no instalado — no se puede leer PDF escaneado")
+                return ""
+            paginas = convert_from_path(ruta_imagen_o_pdf, dpi=200, thread_count=2)
+            return "\n".join(
+                pytesseract.image_to_string(p, lang="spa").strip()
+                for p in paginas
+            ).strip()
 
-    imagen = Image.open(ruta_imagen_o_pdf)
-    return pytesseract.image_to_string(imagen, lang="spa").strip()
+        imagen = Image.open(ruta_imagen_o_pdf)
+        return pytesseract.image_to_string(imagen, lang="spa").strip()
+
+    except pytesseract.TesseractNotFoundError:
+        print("  ⚠ Tesseract no encontrado. Instálalo desde https://github.com/UB-Mannheim/tesseract/wiki")
+        return ""
+    except Exception as e:
+        print(f"  ⚠ Error en OCR: {e}")
+        return ""
