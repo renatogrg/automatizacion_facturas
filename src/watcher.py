@@ -5,9 +5,10 @@ Cuando entra un archivo nuevo, lo procesa automáticamente.
 
 import os
 import time
+import shutil
 from pathlib import Path
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent
+from watchdog.events import FileSystemEventHandler
 
 from src.processor import procesar_factura_completo
 from src.utils.logger import obtener_logger
@@ -37,25 +38,31 @@ class ManejadorFacturas(FileSystemEventHandler):
         tiempo_espera = 0
         
         # Esperar a que el archivo se escriba completamente
-        # (evita procesar archivos que aún se están copiando)
         tamaño_anterior = 0
-        while tiempo_espera < 30:  # Aumentar de 10 a 30 segundos
+        while tiempo_espera < 30:
             try:
                 tamaño_actual = os.path.getsize(ruta)
                 if tamaño_actual == tamaño_anterior and tamaño_actual > 0:
-                    break  # El archivo dejó de crecer y tiene contenido, está listo
+                    break
                 tamaño_anterior = tamaño_actual
-                time.sleep(1)  # Aumentar de 0.5 a 1 segundo
+                time.sleep(1)
                 tiempo_espera += 1
             except OSError:
-                # El archivo aún no existe, intentar más tarde
                 time.sleep(1)
                 tiempo_espera += 1
         
-        # Procesar solo si no ha sido procesado antes
+        nombre_archivo = os.path.basename(ruta)
+        
+        # Verificar si el archivo ya existe en FACTURAS (fue procesado antes)
+        if self._archivo_ya_existe(nombre_archivo):
+            print(f"\n[WATCHER] Archivo duplicado detectado: {nombre_archivo}")
+            self._enviar_a_duplicadas(ruta, nombre_archivo)
+            return
+        
+        # Procesar archivo nuevo
         if ruta not in self.archivos_procesados:
             self.archivos_procesados.add(ruta)
-            print(f"\n[WATCHER] Archivo detectado: {os.path.basename(ruta)}")
+            print(f"\n[WATCHER] Archivo detectado: {nombre_archivo}")
             
             try:
                 procesar_factura_completo(
@@ -66,7 +73,75 @@ class ManejadorFacturas(FileSystemEventHandler):
                 )
             except Exception as e:
                 logger.error(f"Error procesando {ruta}: {e}")
-                print(f"❌ Error al procesar {os.path.basename(ruta)}: {e}")
+                print(f"❌ Error al procesar {nombre_archivo}: {e}")
+    
+    def _archivo_ya_existe(self, nombre_archivo: str) -> bool:
+        """
+        Verifica si un archivo con el mismo nombre ya existe en FACTURAS
+        (es decir, ya fue procesado antes).
+        """
+        carpeta_facturas = Path(self.carpeta_facturas)
+        print(f"  [DEBUG] Buscando duplicado: {nombre_archivo}")
+        print(f"  [DEBUG] Carpeta: {carpeta_facturas}")
+        print(f"  [DEBUG] Existe: {carpeta_facturas.exists()}")
+
+        # Si la carpeta no existe, no hay duplicados
+        if not carpeta_facturas.exists():
+            print(f"  [DEBUG] Carpeta no existe, no es duplicado")
+            return False
+        
+        # Buscar en todas las subcarpetas de consorcios
+        try:
+            encontrado = False
+            for consorcio_dir in carpeta_facturas.iterdir():
+                if not consorcio_dir.is_dir():
+                    continue
+            
+                # Saltar carpetas especiales
+                if consorcio_dir.name in ["Facturas Pendientes", "ENTRADA_FACTURA"]:
+                    continue
+
+                print(f"  [DEBUG] Buscando en: {consorcio_dir.name}")
+            
+                # Buscar en todos los años/meses de este consorcio
+                for archivo in consorcio_dir.rglob(nombre_archivo):
+                    if archivo.is_file():
+                        print(f"  [DEBUG] Duplicado encontrado: {archivo}")
+                        return True
+            if not encontrado:
+                print(f"  [DEBUG] No encontrado, es archivo nuevo")
+            return encontrado
+        
+        except Exception as e:
+            print(f"  [DEBUG] Error: {e}")
+            logger.error(f"Error verificando duplicados: {e}")
+        
+        return False
+    
+    def _enviar_a_duplicadas(self, ruta_archivo: str, nombre_archivo: str):
+        """
+        Mueve un archivo duplicado a Facturas Pendientes/Facturas Duplicadas.
+        """
+        try:
+            carpeta_duplicadas = Path(self.carpeta_facturas) / "Facturas Pendientes" / "Facturas Duplicadas"
+            carpeta_duplicadas.mkdir(parents=True, exist_ok=True)
+            
+            ruta_destino = carpeta_duplicadas / nombre_archivo
+            
+            # Si ya existe, agregar sufijo
+            if ruta_destino.exists():
+                base, ext = os.path.splitext(nombre_archivo)
+                contador = 1
+                while (carpeta_duplicadas / f"{base}_{contador}{ext}").exists():
+                    contador += 1
+                ruta_destino = carpeta_duplicadas / f"{base}_{contador}{ext}"
+            
+            shutil.move(ruta_archivo, str(ruta_destino))
+            print(f"  ✓ Movido a Facturas Duplicadas")
+            
+        except Exception as e:
+            print(f"  ❌ Error al mover a duplicadas: {e}")
+            logger.error(f"Error moviendo a duplicadas {ruta_archivo}: {e}")
 
 
 def iniciar_watcher(settings: dict, consorcios: list):
@@ -84,7 +159,6 @@ def iniciar_watcher(settings: dict, consorcios: list):
     # Crear carpetas si no existen
     Path(carpeta_entrada).mkdir(parents=True, exist_ok=True)
     
-    
     # Configurar watcher
     manejador = ManejadorFacturas(
         consorcios,
@@ -98,7 +172,7 @@ def iniciar_watcher(settings: dict, consorcios: list):
     observador.start()
     
     print(f"✓ Watcher iniciado. Monitoreando: {carpeta_entrada}")
-    print("  Presiona Ctrl+C para detener.\n")
+    print("  (Servicio en segundo plano)\n")
     
     try:
         while True:
@@ -106,5 +180,7 @@ def iniciar_watcher(settings: dict, consorcios: list):
     except KeyboardInterrupt:
         print("\n⊘ Deteniendo watcher...")
         observador.stop()
+    except Exception as e:
+        logger.error(f"Error en watcher: {e}")
     
     observador.join()
