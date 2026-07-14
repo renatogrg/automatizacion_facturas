@@ -1,0 +1,11 @@
+[33m234b467[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{0}: reset: moving to HEAD~1
+[33m9e9f00b[m HEAD@{1}: reset: moving to HEAD~1
+[33m2932040[m HEAD@{2}: commit: Remover credenciales de Google del repositorio
+[33m9e9f00b[m HEAD@{3}: commit: falta cambiar sheets por excel en dribe
+[33m234b467[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{4}: commit: sin api, pre final
+[33m33dad41[m HEAD@{5}: commit: Sistema v1.0 completo: sin API, archivos complejos van a PENDIENTES
+[33m29a6b71[m HEAD@{6}: commit: sin API
+[33m3d5c563[m HEAD@{7}: commit: Fases 1-5 completas: extracción, clasificación, organización y watcher en tiempo real
+[33mb8dee20[m HEAD@{8}: commit: fase 1
+[33m9ba91dc[m HEAD@{9}: pull: Fast-forward
+[33m4790ac5[m HEAD@{10}: commit (initial): Primer commit

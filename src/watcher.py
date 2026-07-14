@@ -120,28 +120,61 @@ class ManejadorFacturas(FileSystemEventHandler):
     
     def _enviar_a_duplicadas(self, ruta_archivo: str, nombre_archivo: str):
         """
-        Mueve un archivo duplicado a Facturas Pendientes/Facturas Duplicadas.
+        Mueve un archivo duplicado a FACTURAS PENDIENTES/Facturas duplicadas
+        tanto en local como en Drive.
         """
+        from src.organizer.file_organizer import mover_a_destino
+        
         try:
-            carpeta_duplicadas = Path(self.carpeta_facturas) / "Facturas Pendientes" / "Facturas Duplicadas"
-            carpeta_duplicadas.mkdir(parents=True, exist_ok=True)
+            cfg = self._cargar_config()
+            local = cfg.get("carpeta_facturas_local", self.carpeta_facturas)
+            drive = cfg.get("carpeta_facturas_drive", "")
+            drive_on = cfg.get("drive_habilitado", False)
             
-            ruta_destino = carpeta_duplicadas / nombre_archivo
+            # Crear carpeta local
+            carpeta_duplicadas_local = Path(local) / "FACTURAS PENDIENTES" / "Facturas duplicadas"
+            carpeta_duplicadas_local.mkdir(parents=True, exist_ok=True)
             
-            # Si ya existe, agregar sufijo
-            if ruta_destino.exists():
+            ruta_destino_local = carpeta_duplicadas_local / nombre_archivo
+            if ruta_destino_local.exists():
                 base, ext = os.path.splitext(nombre_archivo)
                 contador = 1
-                while (carpeta_duplicadas / f"{base}_{contador}{ext}").exists():
+                while (carpeta_duplicadas_local / f"{base}_{contador}{ext}").exists():
                     contador += 1
-                ruta_destino = carpeta_duplicadas / f"{base}_{contador}{ext}"
+                ruta_destino_local = carpeta_duplicadas_local / f"{base}_{contador}{ext}"
             
-            shutil.move(ruta_archivo, str(ruta_destino))
-            print(f"  ✓ Movido a Facturas Duplicadas")
+            shutil.move(ruta_archivo, str(ruta_destino_local))
+            
+            # Crear carpeta Drive si está habilitado
+            if drive_on and drive:
+                carpeta_duplicadas_drive = Path(drive) / "FACTURAS PENDIENTES" / "Facturas duplicadas"
+                carpeta_duplicadas_drive.mkdir(parents=True, exist_ok=True)
+                
+                ruta_destino_drive = carpeta_duplicadas_drive / nombre_archivo
+                if ruta_destino_drive.exists():
+                    base, ext = os.path.splitext(nombre_archivo)
+                    contador = 1
+                    while (carpeta_duplicadas_drive / f"{base}_{contador}{ext}").exists():
+                        contador += 1
+                    ruta_destino_drive = carpeta_duplicadas_drive / f"{base}_{contador}{ext}"
+                
+                shutil.copy2(str(ruta_destino_local), str(ruta_destino_drive))
+            
+            print(f"  ✓ Movido a Facturas duplicadas")
             
         except Exception as e:
             print(f"  ❌ Error al mover a duplicadas: {e}")
             logger.error(f"Error moviendo a duplicadas {ruta_archivo}: {e}")
+    
+    def _cargar_config(self):
+        """Carga settings.json para acceder a rutas de Drive."""
+        from src.utils.config_loader import cargar_settings
+        try:
+            return cargar_settings()
+        except:
+            return {}
+
+
 
 
 def iniciar_watcher(settings: dict, consorcios: list):
