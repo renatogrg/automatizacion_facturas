@@ -49,10 +49,13 @@ def main():
     carpeta_entrada   = Path("salida_prueba/ENTRADA_FACTURA")
     carpeta_pendientes = Path("salida_prueba/FACTURAS/PENDIENTES")
 
-    # Limpiar salida anterior
+    # Limpiar salida anterior (ignorar errores)
     for carpeta in [carpeta_facturas, carpeta_entrada]:
         if carpeta.exists():
-            shutil.rmtree(carpeta)
+            try:
+                shutil.rmtree(carpeta)
+            except Exception:
+                pass  # Ignorar si está bloqueada
 
     carpeta_entrada.mkdir(parents=True, exist_ok=True)
     carpeta_pendientes.mkdir(parents=True, exist_ok=True)
@@ -102,14 +105,8 @@ def main():
     print(f"   {carpeta_facturas.absolute()}")
     _mostrar_estructura(carpeta_facturas, "local")
 
-    if drive_habilitado and carpeta_drive:
-        drive_path = Path(carpeta_drive)
-        if drive_path.exists():
-            print(f"\n☁  Estructura DRIVE generada:")
-            print(f"   {drive_path}")
-            _mostrar_estructura(drive_path, "drive")
-        else:
-            print(f"\n☁  Drive no disponible — solo copia local guardada.")
+    if drive_habilitado:
+        print(f"✓ Drive (API): Habilitado")
 
     print()
     pendientes = list(carpeta_pendientes.glob("*"))

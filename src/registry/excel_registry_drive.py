@@ -1,30 +1,21 @@
 """
-Registra cada factura procesada en el Excel del consorcio correspondiente,
-y las no resueltas en Registro_Pendientes.xlsx
+Registra facturas en Excel local y Drive con hipervínculos funcionales.
 
-Formato de columnas (local y Drive):
-  Fecha | Consorcio | Proveedor | RUC proveedor | Total | Abrir PDF | Abrir Carpeta
-
-Los hipervínculos "Abrir PDF" y "Abrir Carpeta" usan rutas absolutas con file:///
-Solo funcionan como hipervínculo en el Excel LOCAL (Drive no admite file:///).
-En el Excel de Drive las celdas muestran el texto igual pero sin hipervínculo activo,
-lo cual es el comportamiento esperado ya que Drive usa URLs propias.
+Local: usa file:/// (funciona en Excel de Windows)
+Drive: usa https://drive.google.com/open?id=... (funciona en navegador)
 """
 
 import os
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from pathlib import Path
 from datetime import datetime
 
 
-# ─── Estilos ────────────────────────────────────────────────────────────────
-
-COLOR_HEADER      = "1F4E79"   # azul oscuro
-COLOR_HEADER_FONT = "FFFFFF"   # blanco
-COLOR_FILA_PAR    = "D6E4F0"   # azul muy claro
-COLOR_LINK        = "1155CC"   # azul hipervínculo estándar
+COLOR_HEADER      = "1F4E79"
+COLOR_HEADER_FONT = "FFFFFF"
+COLOR_FILA_PAR    = "D6E4F0"
+COLOR_LINK        = "1155CC"
 
 def _borde_fino():
     lado = Side(style="thin", color="B0B0B0")
@@ -40,7 +31,6 @@ def _estilo_header(ws):
         cell.border    = _borde_fino()
 
 def _estilo_fila(ws, fila_idx: int):
-    """Aplica fondo alternado y borde a cada celda de la fila."""
     es_par = (fila_idx % 2 == 0)
     fill   = PatternFill("solid", fgColor=COLOR_FILA_PAR) if es_par else None
     for cell in ws[fila_idx]:
@@ -72,10 +62,7 @@ def _anchos_pendientes():
     }
 
 
-# ─── Crear / abrir workbook ──────────────────────────────────────────────────
-
 def _abrir_o_crear_registro(ruta_excel: Path) -> tuple:
-    """Abre el Excel si existe, o crea uno nuevo con cabecera y estilos."""
     COLUMNAS = ["Fecha", "Consorcio", "Proveedor", "RUC proveedor", "Total",
                 "Abrir PDF", "Abrir Carpeta"]
 
@@ -116,26 +103,27 @@ def _abrir_o_crear_pendientes(ruta_excel: Path) -> tuple:
     return wb, ws
 
 
-# ─── Funciones públicas ───────────────────────────────────────────────────────
-
 def registrar_factura(
     ruta_excel: str,
     fila: dict,
     nombre_consorcio: str = "",
     ruta_pdf_final: str = "",
     ruta_carpeta: str = "",
+    url_pdf_drive: str = "",
+    url_carpeta_drive: str = "",
     es_drive: bool = False,
 ):
     """
-    Agrega una fila al Excel de registro del consorcio.
+    Agrega una fila al Excel con hipervínculos.
 
     Args:
-        ruta_excel:       ruta al archivo .xlsx (local o Drive)
-        fila:             dict con Fecha, Consorcio, Proveedor, RUC proveedor, Total
-        nombre_consorcio: nombre del consorcio (informativo)
-        ruta_pdf_final:   ruta absoluta al PDF ya organizado (para hipervínculo)
-        ruta_carpeta:     ruta a la carpeta donde quedó el PDF (para hipervínculo)
-        es_drive:         True → no generar hipervínculos file:/// (no funcionan en Drive)
+        ruta_excel: ruta al .xlsx
+        fila: dict con Fecha, Consorcio, Proveedor, RUC proveedor, Total
+        ruta_pdf_final: ruta local al PDF (para file:///)
+        ruta_carpeta: ruta local a la carpeta (para file:///)
+        url_pdf_drive: URL de Drive del PDF (https://drive.google.com/open?id=...)
+        url_carpeta_drive: URL de Drive de la carpeta
+        es_drive: si True, usar URLs de Drive en lugar de file:///
     """
     ruta_excel = Path(ruta_excel)
     wb, ws = _abrir_o_crear_registro(ruta_excel)
@@ -148,7 +136,7 @@ def registrar_factura(
         try:
             partes = str(fecha_str).split("-")
             fecha_str = f"{partes[2]}/{partes[1]}/{partes[0]}"
-        except Exception:
+        except:
             pass
 
     ws.cell(fila_idx, 1, fecha_str)
@@ -158,21 +146,33 @@ def registrar_factura(
     ws.cell(fila_idx, 5, fila.get("Total", ""))
 
     # Columna F: Abrir PDF
-    celda_pdf = ws.cell(fila_idx, 6, "Abrir PDF")  # Sin emoji
-    if ruta_pdf_final and not es_drive:
-        uri = Path(ruta_pdf_final).as_uri()          # file:///C:/FACTURAS/...
+    celda_pdf = ws.cell(fila_idx, 6, "Abrir")
+    if es_drive and url_pdf_drive:
+        celda_pdf.value = "📄 Abrir"
+        celda_pdf.hyperlink = url_pdf_drive
+        celda_pdf.font = Font(color=COLOR_LINK, underline="single")
+    elif not es_drive and ruta_pdf_final:
+        celda_pdf.value = "📄 Abrir"
+        uri = Path(ruta_pdf_final).as_uri()
         celda_pdf.hyperlink = uri
-        celda_pdf.font      = Font(color=COLOR_LINK, underline="single")
+        celda_pdf.font = Font(color=COLOR_LINK, underline="single")
     else:
+        celda_pdf.value = "Abrir"
         celda_pdf.alignment = Alignment(horizontal="center")
 
     # Columna G: Abrir Carpeta
-    celda_carpeta = ws.cell(fila_idx, 7, "Abrir Carpeta")  # Sin emoji
-    if ruta_carpeta and not es_drive:
+    celda_carpeta = ws.cell(fila_idx, 7, "Carpeta")
+    if es_drive and url_carpeta_drive:
+        celda_carpeta.value = "📁 Carpeta"
+        celda_carpeta.hyperlink = url_carpeta_drive
+        celda_carpeta.font = Font(color=COLOR_LINK, underline="single")
+    elif not es_drive and ruta_carpeta:
+        celda_carpeta.value = "📁 Carpeta"
         uri = Path(ruta_carpeta).as_uri()
         celda_carpeta.hyperlink = uri
-        celda_carpeta.font      = Font(color=COLOR_LINK, underline="single")
+        celda_carpeta.font = Font(color=COLOR_LINK, underline="single")
     else:
+        celda_carpeta.value = "Carpeta"
         celda_carpeta.alignment = Alignment(horizontal="center")
 
     _estilo_fila(ws, fila_idx)
@@ -186,10 +186,6 @@ def registrar_pendiente(
     nombre_archivo: str,
     motivo: str = "",
 ):
-    """
-    Registra una factura que no pudo clasificarse.
-    Se llama tanto para el Excel local como para el de Drive.
-    """
     ruta_excel = Path(ruta_excel_pendientes)
     wb, ws = _abrir_o_crear_pendientes(ruta_excel)
 

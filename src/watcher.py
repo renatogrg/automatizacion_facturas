@@ -128,7 +128,6 @@ class ManejadorFacturas(FileSystemEventHandler):
         try:
             cfg = self._cargar_config()
             local = cfg.get("carpeta_facturas_local", self.carpeta_facturas)
-            drive = cfg.get("carpeta_facturas_drive", "")
             drive_on = cfg.get("drive_habilitado", False)
             
             # Crear carpeta local
@@ -145,20 +144,21 @@ class ManejadorFacturas(FileSystemEventHandler):
             
             shutil.move(ruta_archivo, str(ruta_destino_local))
             
-            # Crear carpeta Drive si está habilitado
-            if drive_on and drive:
-                carpeta_duplicadas_drive = Path(drive) / "FACTURAS PENDIENTES" / "Facturas duplicadas"
-                carpeta_duplicadas_drive.mkdir(parents=True, exist_ok=True)
-                
-                ruta_destino_drive = carpeta_duplicadas_drive / nombre_archivo
-                if ruta_destino_drive.exists():
-                    base, ext = os.path.splitext(nombre_archivo)
-                    contador = 1
-                    while (carpeta_duplicadas_drive / f"{base}_{contador}{ext}").exists():
-                        contador += 1
-                    ruta_destino_drive = carpeta_duplicadas_drive / f"{base}_{contador}{ext}"
-                
-                shutil.copy2(str(ruta_destino_local), str(ruta_destino_drive))
+            # Subir a Drive por API (el proyecto ya no usa unidad G:\ mapeada
+            # de Drive for Desktop; todo se sube vía Google Drive API)
+            if drive_on:
+                try:
+                    from src.cloud.google_drive_client import (
+                        obtener_o_crear_carpeta,
+                        subir_archivo,
+                    )
+                    id_facturas = obtener_o_crear_carpeta("FACTURAS")
+                    id_pendientes = obtener_o_crear_carpeta("FACTURAS PENDIENTES", id_facturas)
+                    id_duplicadas = obtener_o_crear_carpeta("Facturas duplicadas", id_pendientes)
+                    if id_duplicadas:
+                        subir_archivo(str(ruta_destino_local), ruta_destino_local.name, id_duplicadas)
+                except Exception as e:
+                    print(f"  ⚠ Drive duplicado: {e} (local está guardado)")
             
             print(f"  ✓ Movido a Facturas duplicadas")
             

@@ -1,20 +1,12 @@
 """
-Orquestador principal del pipeline de procesamiento de facturas.
+Processor v3 — Local SIEMPRE funciona. Drive es opcional e independiente.
 
-Flujo (costo mínimo):
-  0. Validar extensión            → ignorar si no es PDF/JPG/JPEG/PNG
-  1. Extraer texto nativo         → PyMuPDF (gratis)
-  2. Si no hay texto → OCR        → Tesseract (gratis)
-  3. Identificar consorcio        → RUC exacto + fuzzy (gratis)
-  4. Buscar fecha                 → regex (gratis)
-  5. Si falta algo → Claude       → Haiku 4.5 (pago, ~$0.001–$0.003)
-  6. Si Claude tampoco resuelve   → PENDIENTES con motivo
-  7. Organizar en carpetas        → local + Drive (si habilitado)
-  8. Registrar en Excel           → local + Drive
+Flujo:
+  1. Organizar LOCALMENTE en C:\FACTURAS\ (siempre)
+  2. INTENTAR subir a Drive por API (si falla, no importa)
+  3. Registrar en Excel (local siempre, Drive solo si subida exitosa)
 """
-from src.google_sheets.sheets_manager import obtener_servicio_drive
-from datetime import datetime
-from src.google_sheets.sheets_manager import obtener_servicio_sheets
+
 import os
 from pathlib import Path
 
@@ -26,7 +18,7 @@ from src.classifier.consorcio_matcher import (
     buscar_fecha_emision,
 )
 from src.organizer.file_organizer import mover_a_destino, copiar_a_pendientes
-from src.registry.excel_registry import registrar_factura, registrar_pendiente
+from src.registry.excel_registry_drive import registrar_factura, registrar_pendiente
 from src.utils.config_loader import cargar_settings
 
 
@@ -37,44 +29,123 @@ def _settings():
         return {}
 
 
+def _subir_a_drive_background(
+    ruta_local: str,
+    nombre_consorcio: str,
+    anio: int,
+    mes: int,
+) -> tuple:
+    """
+    Intenta subir a Drive de forma INDEPENDIENTE.
+    Si falla, no afecta nada — local ya está guardado.
+    
+    Returns:
+        (id_pdf_drive, url_pdf_drive, id_carpeta_drive, url_carpeta_drive)
+        Retorna ("", "", "", "") si falla (pero sin crashear)
+    """
+    try:
+        from src.cloud.google_drive_client import (
+            obtener_o_crear_carpeta,
+            subir_archivo,
+        )
+
+        # Crear estructura en Drive: FACTURAS / Consorcio / Año / Mes
+        id_facturas = obtener_o_crear_carpeta("FACTURAS")
+        if not id_facturas:
+            return "", "", "", ""
+
+        id_consorcio = obtener_o_crear_carpeta(nombre_consorcio, id_facturas)
+        if not id_consorcio:
+            return "", "", "", ""
+
+        meses = {
+            1:  "01-Enero",    2:  "02-Febrero",  3:  "03-Marzo",
+            4:  "04-Abril",    5:  "05-Mayo",     6:  "06-Junio",
+            7:  "07-Julio",    8:  "08-Agosto",   9:  "09-Setiembre",
+            10: "10-Octubre",  11: "11-Noviembre", 12: "12-Diciembre",
+        }
+        mes_nombre = meses[mes]
+
+        id_año = obtener_o_crear_carpeta(str(anio), id_consorcio)
+        if not id_año:
+            return "", "", "", ""
+
+        id_mes = obtener_o_crear_carpeta(mes_nombre, id_año)
+        if not id_mes:
+            return "", "", "", ""
+
+        # Subir archivo
+        nombre_archivo = Path(ruta_local).name
+        id_archivo, url_archivo = subir_archivo(ruta_local, nombre_archivo, id_mes)
+
+        url_carpeta = f"https://drive.google.com/open?id={id_mes}" if id_mes else ""
+
+        return id_archivo, url_archivo, id_mes, url_carpeta
+
+    except Exception as e:
+        # Fallo de Drive, pero local ya está seguro
+        print(f"  ⚠ Drive: {e} (local está guardado)")
+        return "", "", "", ""
+
+
 def _enviar_a_pendientes(
     ruta_archivo: str,
     motivo: str,
     cfg: dict,
+    es_duplicado: bool = False,
 ):
-    nombre = Path(ruta_archivo).name
-    local  = cfg.get("carpeta_facturas_local", "C:\\FACTURAS")
-    drive  = cfg.get("carpeta_facturas_drive", "")
-    drive_on = cfg.get("drive_habilitado", False)
+    """Mueve archivo a FACTURAS PENDIENTES localmente."""
+    local = cfg.get("carpeta_facturas_local", "C:\\FACTURAS")
 
-    ruta_l, ruta_d, _, _ = copiar_a_pendientes(
-        ruta_archivo, local, carpeta_drive=drive, drive_habilitado=drive_on
+    ruta_l = copiar_a_pendientes(
+        ruta_archivo, local, es_duplicado=es_duplicado
     )
 
-    # Excel local de pendientes - RUTA CORREGIDA
+    if not ruta_l:
+        return
+
+    nombre = Path(ruta_archivo).name
+
+    # Excel local (SIEMPRE se registra)
     excel_local = Path(local) / "FACTURAS PENDIENTES" / "Registro_Pendientes.xlsx"
     registrar_pendiente(str(excel_local), nombre, motivo)
 
-    # Excel Drive de pendientes
-    if drive_on and drive and ruta_d:
-        excel_drive = Path(drive) / "FACTURAS PENDIENTES" / "Registro_Pendientes.xlsx"
-        registrar_pendiente(str(excel_drive), nombre, motivo)
-    
-   
+    # Intentar subir a Drive (independiente)
+    try:
+        from src.cloud.google_drive_client import (
+            obtener_o_crear_carpeta,
+            subir_archivo,
+            subir_o_actualizar_google_sheet,
+        )
+        
+        id_facturas = obtener_o_crear_carpeta("FACTURAS")
+        id_pendientes = obtener_o_crear_carpeta("FACTURAS PENDIENTES", id_facturas)
+        
+        if id_pendientes:
+            subir_archivo(ruta_l, nombre, id_pendientes)
+
+            # Excel de pendientes en Drive, como Google Sheets nativo (actualizar, no duplicar)
+            if excel_local.exists():
+                subir_o_actualizar_google_sheet(
+                    str(excel_local), excel_local.stem, id_pendientes
+                )
+    except Exception as e:
+        print(f"  ⚠ Drive pendiente: {e}")
+
 
 def procesar_factura_completo(
     ruta_archivo: str,
     consorcios: list,
-    carpeta_facturas: str,       # mantenido por compatibilidad con test_fase4
-    carpeta_pendientes: str,     # mantenido por compatibilidad con test_fase4
+    carpeta_facturas: str,
+    carpeta_pendientes: str,
 ) -> bool:
+    """Pipeline: local SIEMPRE, Drive SI PUEDE."""
     nombre_archivo = Path(ruta_archivo).name
     print(f"\n[Procesando] {nombre_archivo}")
 
     cfg = _settings()
-    local  = cfg.get("carpeta_facturas_local", carpeta_facturas)
-    drive  = cfg.get("carpeta_facturas_drive", "")
-    drive_on = cfg.get("drive_habilitado", False)
+    local = cfg.get("carpeta_facturas_local", carpeta_facturas)
+    drive_habilitado = cfg.get("drive_habilitado", False)
 
     # ── 0. Validar extensión ─────────────────────────────────────────────────
     if not es_extension_valida(ruta_archivo):
@@ -83,8 +154,8 @@ def procesar_factura_completo(
 
     # ── 1–2. Extraer texto ───────────────────────────────────────────────────
     print("  [1] Extrayendo texto...")
-    texto    = extraer_texto_nativo(ruta_archivo)
-    es_img   = not texto or len(texto) < 50
+    texto = extraer_texto_nativo(ruta_archivo)
+    es_img = not texto or len(texto) < 50
     if es_img:
         texto = extraer_texto_ocr(ruta_archivo)
     if not texto:
@@ -92,11 +163,11 @@ def procesar_factura_completo(
         _enviar_a_pendientes(ruta_archivo, "No se pudo extraer texto", cfg)
         return False
 
-    # ── 3. Identificar consorcio (gratis) ────────────────────────────────────
+    # ── 3. Identificar consorcio ─────────────────────────────────────────────
     print("  [2] Identificando consorcio...")
     consorcio = identificar_consorcio(texto, consorcios)
 
-    # ── 4. Buscar fecha (gratis) ─────────────────────────────────────────────
+    # ── 4. Buscar fecha ──────────────────────────────────────────────────────
     print("  [3] Buscando fecha de emisión...")
     fecha = buscar_fecha_emision(texto)
     anio, mes = fecha if fecha else (None, None)
@@ -122,112 +193,98 @@ def procesar_factura_completo(
         except Exception as e:
             print(f"  ⚠ Claude no disponible: {e}")
 
-    # ── 6. Sin datos → PENDIENTES ────────────────────────────────────────────
+    # ── 6. Sin datos → FACTURAS PENDIENTES ────────────────────────────────────
     if consorcio is None:
-        print("  ❌ Consorcio no identificado → PENDIENTES")
+        print("  ❌ Consorcio no identificado → FACTURAS PENDIENTES")
         _enviar_a_pendientes(ruta_archivo, "Consorcio no identificado", cfg)
         return False
     if anio is None or mes is None:
-        print("  ❌ Fecha no encontrada → PENDIENTES")
+        print("  ❌ Fecha no encontrada → FACTURAS PENDIENTES")
         _enviar_a_pendientes(ruta_archivo, "Fecha de emisión no encontrada", cfg)
         return False
 
-    # ── 7. Organizar en carpetas ─────────────────────────────────────────────
-    print(f"  [5] Organizando en {consorcio['nombre']}/{anio}/{mes:02d}...")
-    ruta_l, ruta_d, archivo_id, carpeta_id = mover_a_destino(
-        ruta_archivo, local, consorcio["nombre"], anio, mes,
-        carpeta_drive=drive, drive_habilitado=drive_on,
+    # ── 7. ORGANIZAR LOCALMENTE (SIEMPRE) ────────────────────────────────────
+    print(f"  [5] Organizando localmente en {consorcio['nombre']}/{anio}/{mes:02d}...")
+    ruta_l = mover_a_destino(
+        ruta_archivo, local, consorcio["nombre"], anio, mes
     )
     if not ruta_l:
         print("  ❌ Error al mover archivo")
         return False
 
     ruta_carpeta_local = str(Path(ruta_l).parent)
-    ruta_carpeta_drive = str(Path(ruta_d).parent) if ruta_d else ""
 
-    # ── 8. Registrar en Excel ────────────────────────────────────────────────
-    print("  [6] Registrando en Excel...")
+    # ── 8. SUBIR A DRIVE (INDEPENDIENTE, SI FALLA NO IMPORTA) ─────────────────
+    id_pdf_drive = ""
+    url_pdf_drive = ""
+    id_carpeta_drive = ""
+    url_carpeta_drive = ""
+
+    if drive_habilitado:
+        print("  [6] Subiendo a Google Drive...")
+        id_pdf_drive, url_pdf_drive, id_carpeta_drive, url_carpeta_drive = (
+            _subir_a_drive_background(ruta_l, consorcio["nombre"], anio, mes)
+        )
+
+    # ── 9. REGISTRAR EN EXCEL ────────────────────────────────────────────────
+    print("  [7] Registrando en Excel...")
     datos_fila = {
         "Fecha":         f"{anio}-{mes:02d}-01",
         "Consorcio":     consorcio["nombre"],
-        "Proveedor":     consorcio.get("proveedor_texto", "—"),
+        "Proveedor":     "—",
         "RUC proveedor": buscar_ruc(texto) or "—",
         "Total":         "—",
     }
 
-    # Excel local (con hipervínculos)
-    excel_local = Path(local) / consorcio["nombre"] / f"Registro Facturas {consorcio['nombre']}.xlsx"
+    # Excel local (SIEMPRE se crea)
+    excel_local = (
+        Path(local) / consorcio["nombre"]
+        / f"Registro Facturas - {consorcio['nombre']}.xlsx"
+    )
     registrar_factura(
         str(excel_local), datos_fila,
         ruta_pdf_final=ruta_l,
         ruta_carpeta=ruta_carpeta_local,
         es_drive=False,
     )
-    # Excel Drive
-    if drive_on and drive and ruta_d:
-       excel_drive = Path(drive) / consorcio["nombre"] / f"Registro Facturas - {consorcio['nombre']}.xlsx"
-       registrar_factura(
-           str(excel_drive), datos_fila,
-           ruta_pdf_final=ruta_d,
-           ruta_carpeta=ruta_carpeta_drive,
-           es_drive=True,
-       )
-    
 
-    # Excel Drive (sin hipervínculos file:///)
-    # Google Sheets en Drive (con hipervínculos compartibles)
-    if drive_on and drive and ruta_d and archivo_id and carpeta_id:
+    # Sheets en Drive (SOLO si subida a Drive fue exitosa) — se genera una
+    # copia temporal con hipervínculos reales de Drive (no file:///) y esa
+    # es la que se sube, convertida a Google Sheets nativo.
+    if drive_habilitado and url_pdf_drive:
         try:
-            from src.google_sheets.sheets_manager import (
-                autenticar_google,
-                crear_o_abrir_sheet,
-                agregar_fila_con_links,
-                obtener_servicio_drive
+            from src.cloud.google_drive_client import (
+                obtener_o_crear_carpeta,
+                subir_o_actualizar_google_sheet,
             )
-            
-            creds = autenticar_google()
-            nombre_sheet = f"Registro Facturas {consorcio['nombre']}"
-            
-            # Obtener ID de la carpeta del consorcio en Drive
-            drive_service = obtener_servicio_drive(creds)
-            carpeta_consorcio_nombre = consorcio['nombre']
-            query = f"name='{carpeta_consorcio_nombre}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-            results = drive_service.files().list(
-                q=query,
-                spaces='drive',
-                fields='files(id)',
-                pageSize=1
-            ).execute()
-            
-            carpeta_consorcio_id = ""
-            folders = results.get('files', [])
-            if folders:
-                carpeta_consorcio_id = folders[0]['id']
-            
-            # Crear o abrir el Sheet en la carpeta del consorcio
-            spreadsheet_id = crear_o_abrir_sheet(
-                creds, 
-                nombre_sheet,
-                carpeta_drive_id=carpeta_consorcio_id
-            )
-            
-            if spreadsheet_id:
-                agregar_fila_con_links(
-                    creds,
-                    spreadsheet_id,
-                    datos_fila["Fecha"],
-                    datos_fila["Consorcio"],
-                    datos_fila["Proveedor"],
-                    datos_fila["RUC proveedor"],
-                    datos_fila["Total"],
-                    archivo_id,
-                    carpeta_id
-                )
-                print("  ✓ Registrado en Google Sheets")
-        except Exception as e:
-            print(f"  ⚠ No se pudo registrar en Sheets: {e}")
-            import traceback
-            traceback.print_exc()
 
-    print("  ✓ Factura procesada exitosamente")
+            id_facturas = obtener_o_crear_carpeta("FACTURAS")
+            id_consorcio_drive = obtener_o_crear_carpeta(
+                consorcio["nombre"], id_facturas
+            )
+
+            if id_consorcio_drive:
+                # Excel temporal con enlaces de Drive (se reconstruye completo
+                # a partir de las mismas filas del registro local, pero
+                # apuntando a URLs de Drive en vez de rutas locales).
+                excel_drive_tmp = (
+                    Path(local) / consorcio["nombre"] / ".drive_sync"
+                    / f"Registro Facturas - {consorcio['nombre']}.xlsx"
+                )
+                registrar_factura(
+                    str(excel_drive_tmp), datos_fila,
+                    url_pdf_drive=url_pdf_drive,
+                    url_carpeta_drive=url_carpeta_drive,
+                    es_drive=True,
+                )
+
+                nombre_sheet = f"Registro Facturas - {consorcio['nombre']}"
+                subir_o_actualizar_google_sheet(
+                    str(excel_drive_tmp), nombre_sheet, id_consorcio_drive
+                )
+
+        except Exception as e:
+            print(f"  ⚠ Excel en Drive: {e}")
+
+    print("  ✓ Factura procesada exitosamente (local OK)")
     return True
