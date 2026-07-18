@@ -103,6 +103,71 @@ def _abrir_o_crear_pendientes(ruta_excel: Path) -> tuple:
     return wb, ws
 
 
+def _parsear_fecha_ordenamiento(fecha_str: str) -> datetime:
+    """Convierte 'DD/MM/YYYY' a datetime para poder ordenar. Fechas inválidas
+    o vacías van al final."""
+    try:
+        return datetime.strptime(str(fecha_str).strip(), "%d/%m/%Y")
+    except (ValueError, TypeError):
+        return datetime.max
+
+
+def _ordenar_registro_por_fecha(ws):
+    """
+    Reordena todas las filas de datos (desde la fila 2) por la columna
+    Fecha (A), de más antigua a más reciente, preservando los hipervínculos
+    de las columnas F (PDF) y G (Carpeta).
+    """
+    max_fila = ws.max_row
+    if max_fila < 3:
+        return  # 0 o 1 fila de datos: nada que ordenar
+
+    filas = []
+    for fila_idx in range(2, max_fila + 1):
+        valores = [ws.cell(fila_idx, col).value for col in range(1, 6)]  # A-E
+
+        celda_pdf = ws.cell(fila_idx, 6)
+        celda_carpeta = ws.cell(fila_idx, 7)
+
+        filas.append({
+            "valores": valores,
+            "pdf_texto": celda_pdf.value,
+            "pdf_link": celda_pdf.hyperlink.target if celda_pdf.hyperlink else None,
+            "carpeta_texto": celda_carpeta.value,
+            "carpeta_link": celda_carpeta.hyperlink.target if celda_carpeta.hyperlink else None,
+        })
+
+    filas.sort(key=lambda f: _parsear_fecha_ordenamiento(f["valores"][0]))
+    #filas.sort(key=lambda f: _parsear_fecha_ordenamiento(f["valores"][0]), reverse=True)
+    #cambiar orden de fecha excel registro para que quede de mas reciente a mas antiguo, para que se vea primero lo mas reciente
+
+
+    # Borrar filas de datos actuales y reescribir en el orden ya ordenado
+    ws.delete_rows(2, max_fila - 1)
+
+    for i, f in enumerate(filas):
+        fila_idx = i + 2
+        for col, valor in enumerate(f["valores"], start=1):
+            ws.cell(fila_idx, col, valor)
+
+        celda_pdf = ws.cell(fila_idx, 6, f["pdf_texto"])
+        if f["pdf_link"]:
+            celda_pdf.hyperlink = f["pdf_link"]
+            celda_pdf.font = Font(color=COLOR_LINK, underline="single")
+        else:
+            celda_pdf.alignment = Alignment(horizontal="center")
+
+        celda_carpeta = ws.cell(fila_idx, 7, f["carpeta_texto"])
+        if f["carpeta_link"]:
+            celda_carpeta.hyperlink = f["carpeta_link"]
+            celda_carpeta.font = Font(color=COLOR_LINK, underline="single")
+        else:
+            celda_carpeta.alignment = Alignment(horizontal="center")
+
+        _estilo_fila(ws, fila_idx)
+        ws.row_dimensions[fila_idx].height = 15
+
+
 def registrar_factura(
     ruta_excel: str,
     fila: dict,
@@ -177,6 +242,8 @@ def registrar_factura(
 
     _estilo_fila(ws, fila_idx)
     ws.row_dimensions[fila_idx].height = 15
+
+    _ordenar_registro_por_fecha(ws)
 
     wb.save(ruta_excel)
 

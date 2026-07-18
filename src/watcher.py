@@ -98,7 +98,7 @@ class ManejadorFacturas(FileSystemEventHandler):
                     continue
             
                 # Saltar carpetas especiales
-                if consorcio_dir.name in ["Facturas Pendientes", "ENTRADA_FACTURA"]:
+                if consorcio_dir.name in ["FACTURAS PENDIENTES", "ENTRADA_FACTURA"]:
                     continue
 
                 print(f"  [DEBUG] Buscando en: {consorcio_dir.name}")
