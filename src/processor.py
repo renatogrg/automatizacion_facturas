@@ -172,12 +172,14 @@ def procesar_factura_completo(
     fecha = buscar_fecha_emision(texto)
     anio, mes = fecha if fecha else (None, None)
 
-    # ── 5. Fallback a Claude ─────────────────────────────────────────────────
+    # ── 5. Fallback a Groq ────────────────────────────────────────────────────
+    uso_groq = False
     if consorcio is None or fecha is None:
-        print("  [4] Consultando Claude Haiku 4.5 (datos incompletos)...")
+        print("  🤖 [4] Consultando Groq (datos incompletos)...")
+        uso_groq = True
         nombres_c = [c["nombre"] for c in consorcios]
         try:
-            from src.extractor.claude_client import analizar_con_texto, analizar_con_imagen
+            from src.extractor.groq_client import analizar_con_texto, analizar_con_imagen
             res = analizar_con_imagen(ruta_archivo, nombres_c) if es_img \
                   else analizar_con_texto(texto, nombres_c)
 
@@ -191,15 +193,21 @@ def procesar_factura_completo(
                 if fecha is None and res.get("anio") and res.get("mes"):
                     anio, mes = res["anio"], res["mes"]
         except Exception as e:
-            print(f"  ⚠ Claude no disponible: {e}")
+            print(f"  ⚠ Groq no disponible: {e}")
 
     # ── 6. Sin datos → FACTURAS PENDIENTES ────────────────────────────────────
     if consorcio is None:
-        print("  ❌ Consorcio no identificado → FACTURAS PENDIENTES")
+        if uso_groq:
+            print("  ❌🤖 Consorcio no identificado (ni con Groq) → FACTURAS PENDIENTES")
+        else:
+            print("  ❌ Consorcio no identificado → FACTURAS PENDIENTES")
         _enviar_a_pendientes(ruta_archivo, "Consorcio no identificado", cfg)
         return False
     if anio is None or mes is None:
-        print("  ❌ Fecha no encontrada → FACTURAS PENDIENTES")
+        if uso_groq:
+            print("  ❌🤖 Fecha no encontrada (ni con Groq) → FACTURAS PENDIENTES")
+        else:
+            print("  ❌ Fecha no encontrada → FACTURAS PENDIENTES")
         _enviar_a_pendientes(ruta_archivo, "Fecha de emisión no encontrada", cfg)
         return False
 
@@ -286,5 +294,8 @@ def procesar_factura_completo(
         except Exception as e:
             print(f"  ⚠ Excel en Drive: {e}")
 
-    print("  ✓ Factura procesada exitosamente (local OK)")
+    if uso_groq:
+        print("  ✓🤖 Factura procesada exitosamente (local OK, con ayuda de Groq)")
+    else:
+        print("  ✓ Factura procesada exitosamente (local OK)")
     return True
