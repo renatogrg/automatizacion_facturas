@@ -7,8 +7,18 @@ __pycache__/
 # Configuración sensible
 .env
 config/.env
+config/google_credentials.json
+config/google_token.json
+config/credentials.json
+config/token.pickle
+config/consorcios.json
 
-# Facturas y datos reales (privacidad)
+# Datos locales
+salida_prueba/
+.drive_sync/
+**/.drive_sync/
+
+# Facturas de prueba
 tests/sample_invoices/*.pdf
 tests/sample_invoices/*.jpg
 tests/sample_invoices/*.jpeg
@@ -19,7 +29,7 @@ tests/sample_invoices/*.png
 logs/
 *.log
 
-# Build / empaquetado
+# Build generado
 build/dist/
 dist/
 *.spec
@@ -34,9 +44,6 @@ dist/
 .coverage
 htmlcov/
 
-# Sistema operativo
+# Sistema
 .DS_Store
 Thumbs.db
-
-config/credentials.json
-config/token.picklegit 

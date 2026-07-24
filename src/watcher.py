@@ -1,4 +1,4 @@
-"""
+﻿"""
 Monitorea la carpeta ENTRADA_FACTURA en tiempo real.
 Cuando entra un archivo nuevo, lo procesa automáticamente.
 """
@@ -33,8 +33,17 @@ class ManejadorFacturas(FileSystemEventHandler):
         """Se dispara cuando se crea un archivo nuevo."""
         if event.is_directory:
             return
-        
-        ruta = event.src_path
+        self._procesar_evento(event.src_path)
+
+    def on_moved(self, event):
+        """Se dispara cuando se mueve (cortar/pegar) un archivo a la carpeta."""
+        if event.is_directory:
+            return
+        # event.dest_path es la nueva ubicación (dentro de ENTRADA_FACTURA)
+        self._procesar_evento(event.dest_path)
+
+    def _procesar_evento(self, ruta: str):
+        """Lógica común para on_created y on_moved."""
         tiempo_espera = 0
         
         # Esperar a que el archivo se escriba completamente
@@ -65,15 +74,20 @@ class ManejadorFacturas(FileSystemEventHandler):
             print(f"\n[WATCHER] Archivo detectado: {nombre_archivo}")
             
             try:
-                procesar_factura_completo(
+                exito = procesar_factura_completo(
                     ruta,
                     self.consorcios,
                     self.carpeta_facturas,
                     self.carpeta_pendientes
                 )
+                # Si falló (fue a pendientes), liberarlo para que pueda
+                # reintentarse si el usuario lo vuelve a copiar a ENTRADA_FACTURA
+                if not exito:
+                    self.archivos_procesados.discard(ruta)
             except Exception as e:
                 logger.error(f"Error procesando {ruta}: {e}")
                 print(f"❌ Error al procesar {nombre_archivo}: {e}")
+                self.archivos_procesados.discard(ruta)
     
     def _archivo_ya_existe(self, nombre_archivo: str) -> bool:
         """
@@ -97,8 +111,8 @@ class ManejadorFacturas(FileSystemEventHandler):
                 if not consorcio_dir.is_dir():
                     continue
             
-                # Saltar carpetas especiales
-                if consorcio_dir.name in ["FACTURAS PENDIENTES", "ENTRADA_FACTURA"]:
+                # Saltar carpetas especiales (comparación insensible a mayúsculas)
+                if consorcio_dir.name.upper() in ["FACTURAS PENDIENTES", "ENTRADA_FACTURA"]:
                     continue
 
                 print(f"  [DEBUG] Buscando en: {consorcio_dir.name}")

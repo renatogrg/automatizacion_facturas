@@ -15,6 +15,7 @@ imagen con pdf2image antes de enviarla.
 import os
 import base64
 import json
+import time
 from pathlib import Path
 from groq import Groq
 
@@ -54,24 +55,56 @@ def analizar_con_texto(texto_factura: str, consorcios: list) -> dict | None:
     """
     Envía el texto extraído a Groq para completar campos faltantes.
     Usa este camino cuando el PDF tenía capa de texto (factura electrónica).
+    Reintenta hasta 2 veces si la respuesta viene con campos vacíos.
     """
-    try:
-        cliente = _cliente()
-        prompt = f"{_construir_lista_consorcios(consorcios)}\n\nTexto de la factura:\n{texto_factura[:3000]}"
+    MAX_INTENTOS = 3
+    cliente = _cliente()
+    prompt = f"{_construir_lista_consorcios(consorcios)}\n\nTexto de la factura:\n{texto_factura[:3000]}"
 
-        respuesta = cliente.chat.completions.create(
-            model=MODELO_TEXTO,
-            max_tokens=300,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": PROMPT_SISTEMA},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        return _parsear_respuesta(respuesta.choices[0].message.content)
-    except Exception as e:
-        print(f"  ⚠ Groq (texto) falló: {e}")
-        return None
+    for intento in range(1, MAX_INTENTOS + 1):
+        try:
+            respuesta = cliente.chat.completions.create(
+                model=MODELO_TEXTO,
+                max_tokens=300,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": PROMPT_SISTEMA},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            resultado = _parsear_respuesta(respuesta.choices[0].message.content)
+            if resultado and (resultado.get("anio") or resultado.get("consorcio")):
+                return resultado
+            if intento < MAX_INTENTOS:
+                print(f"  ⚠ Groq (texto) respuesta incompleta, reintentando ({intento}/{MAX_INTENTOS - 1})...")
+                time.sleep(1)
+        except Exception as e:
+            if intento < MAX_INTENTOS:
+                print(f"  ⚠ Groq (texto) error, reintentando ({intento}/{MAX_INTENTOS - 1})... {e}")
+                time.sleep(1)
+            else:
+                print(f"  ⚠ Groq (texto) falló tras {MAX_INTENTOS} intentos: {e}")
+    return None
+
+
+def _poppler_path() -> str | None:
+    """
+    Devuelve la ruta al directorio bin de Poppler.
+    Busca primero en la instalación local del sistema (junto al .exe),
+    luego en rutas comunes de Windows. Si no encuentra nada, devuelve
+    None y deja que pdf2image lo busque en el PATH del sistema.
+    """
+    candidatos = [
+        r"C:\SistemaFacturas\poppler\Library\bin",
+        r"C:\Program Files\poppler\Library\bin",
+        r"C:\poppler\Library\bin",
+        # Entorno de desarrollo: build/poppler junto al proyecto
+        str(Path(__file__).resolve().parents[2] / "build" / "poppler" / "Library" / "bin"),
+    ]
+    for ruta in candidatos:
+        if Path(ruta).exists():
+            return ruta
+    return None
 
 
 def _convertir_a_imagen_base64(ruta_archivo: str) -> tuple[str, str] | None:
@@ -88,7 +121,12 @@ def _convertir_a_imagen_base64(ruta_archivo: str) -> tuple[str, str] | None:
         except ImportError:
             print("  ⚠ pdf2image no instalado — no se puede convertir PDF para Groq")
             return None
-        paginas = convert_from_path(ruta_archivo, dpi=200, thread_count=1, first_page=1, last_page=1)
+        poppler = _poppler_path()
+        paginas = convert_from_path(
+            ruta_archivo, dpi=200, thread_count=1,
+            first_page=1, last_page=1,
+            poppler_path=poppler,
+        )
         if not paginas:
             return None
         import io
@@ -112,40 +150,50 @@ def analizar_con_imagen(ruta_archivo: str, consorcios: list) -> dict | None:
     """
     Envía la imagen (o primera página del PDF convertida a imagen) a un
     modelo de visión de Groq. Usa este camino cuando es foto o PDF escaneado
-    sin texto.
+    sin texto. Reintenta hasta 2 veces si la respuesta viene con campos vacíos.
     """
-    try:
-        resultado_conversion = _convertir_a_imagen_base64(ruta_archivo)
-        if resultado_conversion is None:
-            return None
-        datos_b64, media_type = resultado_conversion
-
-        cliente = _cliente()
-        prompt_usuario = f"{_construir_lista_consorcios(consorcios)}\n\nAnaliza esta factura y extrae los datos solicitados."
-
-        respuesta = cliente.chat.completions.create(
-            model=MODELO_VISION,
-            max_tokens=300,
-            reasoning_effort="none",  # modo directo, sin razonamiento interno
-            messages=[
-                {"role": "system", "content": PROMPT_SISTEMA},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt_usuario},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{media_type};base64,{datos_b64}"},
-                        },
-                    ],
-                },
-            ],
-        )
-        return _parsear_respuesta(respuesta.choices[0].message.content)
-
-    except Exception as e:
-        print(f"  ⚠ Groq (imagen) falló: {e}")
+    resultado_conversion = _convertir_a_imagen_base64(ruta_archivo)
+    if resultado_conversion is None:
         return None
+    datos_b64, media_type = resultado_conversion
+
+    MAX_INTENTOS = 3
+    cliente = _cliente()
+    prompt_usuario = f"{_construir_lista_consorcios(consorcios)}\n\nAnaliza esta factura y extrae los datos solicitados."
+
+    for intento in range(1, MAX_INTENTOS + 1):
+        try:
+            respuesta = cliente.chat.completions.create(
+                model=MODELO_VISION,
+                max_tokens=300,
+                reasoning_effort="none",
+                messages=[
+                    {"role": "system", "content": PROMPT_SISTEMA},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_usuario},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{media_type};base64,{datos_b64}"},
+                            },
+                        ],
+                    },
+                ],
+            )
+            resultado = _parsear_respuesta(respuesta.choices[0].message.content)
+            if resultado and (resultado.get("anio") or resultado.get("consorcio")):
+                return resultado
+            if intento < MAX_INTENTOS:
+                print(f"  ⚠ Groq (imagen) respuesta incompleta, reintentando ({intento}/{MAX_INTENTOS - 1})...")
+                time.sleep(1)
+        except Exception as e:
+            if intento < MAX_INTENTOS:
+                print(f"  ⚠ Groq (imagen) error, reintentando ({intento}/{MAX_INTENTOS - 1})... {e}")
+                time.sleep(1)
+            else:
+                print(f"  ⚠ Groq (imagen) falló tras {MAX_INTENTOS} intentos: {e}")
+    return None
 
 
 def _parsear_respuesta(texto: str) -> dict | None:

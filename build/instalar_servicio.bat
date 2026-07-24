@@ -66,17 +66,15 @@ echo pause
 
 echo  OK
 
-REM ── 4. Crear acceso directo en Inicio (autoarranque) ─────────
-echo  [4/4] Configurando inicio automatico al encender la PC...
-
-set STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+REM ── 4. Crear acceso directo en el Escritorio (inicio MANUAL) ─
+echo  [4/4] Creando acceso directo en el Escritorio...
 
 powershell -NoProfile -Command ^
   "$ws = New-Object -ComObject WScript.Shell;" ^
-  "$sc = $ws.CreateShortcut('%STARTUP%\SistemaFacturas.lnk');" ^
+  "$desktop = $ws.SpecialFolders('Desktop');" ^
+  "$sc = $ws.CreateShortcut(\"$desktop\SistemaFacturas.lnk\");" ^
   "$sc.TargetPath = 'C:\SistemaFacturas\SistemaFacturas.bat';" ^
   "$sc.WorkingDirectory = 'C:\SistemaFacturas';" ^
-  "$sc.WindowStyle = 7;" ^
   "$sc.Description = 'Sistema de Gestion Automatica de Facturas';" ^
   "$sc.Save()" >nul 2>&1
 
@@ -89,11 +87,12 @@ echo  ============================================================
 echo.
 echo   Programa instalado en : C:\SistemaFacturas\
 echo   Archivo de inicio     : C:\SistemaFacturas\SistemaFacturas.bat
-echo   Autoarranque          : Configurado (inicio de sesion)
+echo   Acceso directo        : Escritorio (SistemaFacturas.lnk)
+echo   Inicio automatico     : DESACTIVADO - se abre solo al hacer doble clic
 echo.
 echo   PROXIMO PASO:
 echo   Edita C:\SistemaFacturas\config\.env
-echo   y coloca tu clave de API de Anthropic:
-echo   ANTHROPIC_API_KEY=sk-ant-...
+echo   y coloca tu clave de API de Groq:
+echo   GROQ_API_KEY=gsk_...
 echo.
 pause

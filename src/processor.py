@@ -159,9 +159,10 @@ def procesar_factura_completo(
     if es_img:
         texto = extraer_texto_ocr(ruta_archivo)
     if not texto:
-        print("  ❌ No se pudo extraer texto")
-        _enviar_a_pendientes(ruta_archivo, "No se pudo extraer texto", cfg)
-        return False
+        # Tesseract no disponible o no pudo extraer — NO enviamos a pendientes
+        # todavía: el paso 4 (Groq visión) puede resolver con la imagen directamente.
+        print("  ⚠ Sin texto extraído — se intentará con Groq visión...")
+        es_img = True  # forzar camino de imagen en Groq
 
     # ── 3. Identificar consorcio ─────────────────────────────────────────────
     print("  [2] Identificando consorcio...")
